@@ -1,0 +1,5 @@
+; $Id$
+name = GetWiki
+description = "Embed a Wikipedia article anywhere in your blog."
+core = 6.x
+version = "6.x-1.0a1"

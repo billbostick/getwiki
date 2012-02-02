@@ -1,0 +1,178 @@
+<?php
+/* $Id:$ */
+function getwiki_menu() {
+  $item = array();
+  $item['admin/settings/getwiki'] = array(
+    'title' => t('Getwiki Settings'),
+    'description' => t('Settings that control the Getwiki module.'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('getwiki_configure'),
+    'access arguments' => array('access administration pages'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  $item['getwiki/%'] = array(
+    'page callback' => 'getwiki_page',
+    'page arguments' => array(1),
+    'type' => MENU_CALLBACK,
+    'access arguments' => array('access content')
+  );
+  return $item;
+}
+
+function getwiki_configure() {
+   $form = array();
+ 
+   $form['getwiki_host'] = array(
+  '#type' => 'textfield',
+  '#default_value' => variable_get('getwiki_host', 'http://en.wikipedia.org/wiki'),
+  '#required' => TRUE,
+  '#title' => t('URL path to your wikipedia server'),
+  '#description' => t('include the path prefix. i.e. if your wikipedia articles in the server are available at http://en.wikipedia.org/wiki include "wiki" in the url path.'));
+
+   $form['getwiki_autonode'] = array(
+  '#type' => 'checkbox',
+  '#disabled' => TRUE,
+  '#default_value' => variable_get('getwiki_autonode', FALSE),
+  '#title' => t('Create a story node automatically from retrieved wiki'),
+  '#description' => t('TBD: This will create a node automatically from the retrieved wiki page and next time you access the same link - the local node will load.'));
+
+   $form['getwiki_autonode_refresh'] = array(
+  '#type' => 'textfield',
+  '#default_value' => variable_get('getwiki_autonode_refresh', 30),
+  '#disabled' => TRUE,
+  '#length' => 3,
+  '#title' => t('Days after which to refresh this node'),
+  '#description' => t('TBD: Number of days after which this copy of the node will be refreshed with a fresh page from the wiki. 0 - for always get copy. blank to never refresh after first time.'));
+
+  $copy_left = "<div class=\"gfdl\">&copy; This material from <a href=\"http://en.wikipedia.org\">Wikipedia</a> is licensed under the <a href=\"http://www.gnu.org/copyleft/fdl.html\">GFDL</a>.</div>";
+
+   $form['getwiki_copyleft'] = array(
+  '#type' => 'textfield',
+  '#default_value' => variable_get('getwiki_copyleft', $copy_left),
+  '#title' => t('Copyright information for source'),
+  '#description' => t('Any copyright information you may wish to include to attribute to source of article.'));
+
+   $form['getwiki_wikify'] = array(
+  '#type' => 'checkbox',
+  '#default_value' => variable_get('getwiki_wikify', FALSE),
+  '#title' => t('Enable wikify tag'),
+  '#description' => t('To get the wiki page for Title embedded in your node enter in [getwiki]Title[/getwiki] in your filtered content.'));
+
+   return system_settings_form($form);
+}
+
+
+function _getwiki_host() {
+  $host = variable_get('getwiki_host', 'http://en.wikipedia.org/wiki');
+  return parse_url($host, PHP_URL_HOST);
+}
+
+function _getwiki_port() {
+  $host = variable_get('getwiki_host', 'http://en.wikipedia.org/wiki');
+  $port = parse_url($host, PHP_URL_PORT);
+  $port = $port? $port:80;
+  return $port;
+}
+
+function _getwiki_path() {
+  $host = variable_get('getwiki_host', 'http://en.wikipedia.org/wiki');
+  return parse_url($host, PHP_URL_PATH);
+}
+
+function _getwiki_url() {
+  return 'http://'. _getwiki_host() .':'. _getwiki_port();  
+}
+
+function _getwiki_url_path() {
+  return variable_get('getwiki_host', 'http://en.wikipedia.org/wiki');
+}
+
+function getwiki_load($nid) {
+}
+
+function getwiki_page($title) {
+  $host = _getwiki_host();
+  $port = _getwiki_port();
+  $path = _getwiki_path();
+
+  drupal_add_css(drupal_get_path('module', 'getwiki') .'/getwiki.css');
+  $out = "GET $path/$title HTTP/1.0\r\nHost: $host\r\nUser-Agent: GetWiki for Drupal\r\n\r\n";
+  $fp = fsockopen($host, $port, $errno, $errstr, 30);
+  fwrite($fp, $out);
+  $article = "";
+  while (!feof($fp)) {
+    $article .= fgets($fp, 128);
+  }
+  
+  if (substr($article, 0, 12)=="HTTP/1.0 301") {
+    if (preg_match("/^.*Location\:\s(\S*).*$/im", $article, $match) != 0) {
+      $article = str_replace(_getwiki_url_path(), "", $match[1]);
+      $article = getwiki_page($article);
+    } 
+    else {
+      $article = "== WIKI Error ==";
+    }
+  }
+  fclose($fp);
+
+  $article = _getwiki_filter($article);
+  return $article;
+}
+
+function _getwiki_filter($article) {
+  $article = str_replace("\n", "", $article);
+
+  if (preg_match("#\<body?.*\>(.*)\<\/body\>.*$#", $article, $match) !=0 ) {
+    $article = $match[0];
+  }
+
+/* wikipedia articles are wrapped in a div id=column-content div.
+ * subsequent div is div id="column-one" look for these and remove all else.
+ */
+  $article = preg_replace('/\<div id="column-one"\>.*/i', '', $article);
+  $article = preg_replace("#\<\!\-\-.*\-\-\>#imseU", "", $article);
+  $article = preg_replace("#\[\!\&\#.*\]#imseU", "", $article);
+
+  $article = str_replace('"/w/', '"'. _getwiki_url() ."/w/", $article);
+//  $article = str_replace('"/wiki/', '"' . _getwiki_url() . "/wiki/", $article);
+  $local_url = url("getwiki/");
+  $article = str_replace('"/wiki/', '"'. $local_url, $article);
+//  $article = str_replace('"/skins-1.5/', '"' . _getwiki_url() . "/skins-1.5/",$article);
+  $article = "<div class=\"wiki\">". $article . variable_get('getwiki_copyleft', '') ."</div>";
+  
+  return $article;
+}
+
+function getwiki_filter($op, $delta = 0, $format = -1, $text = '') {
+  if (!variable_get('getwiki_wikify', FALSE)) {
+    return $text;
+  }
+  switch ($op) {
+    case 'no cache':
+      return TRUE;
+    case 'list':
+      return array(0 => t('GetWiki tag'));
+    case 'prepare':
+      return $text;
+    case 'process':
+      $text = preg_replace('#\[getwiki\](.*)\[\/getwiki\]#imseU', "getwiki_page('$1')", $text);
+      return $text;
+    default:
+      return $text;
+  }
+}
+
+//function wikify( $text ) {
+//    $text = preg_replace(
+//        "#\~GetWIKI\((\S*)\)\~#imseU",
+//        "getArticle('$1')",
+//        $text
+//    );
+//    return $text;
+//}
+//
+//echo wikify("~GetWIKI(user:Sajin)~");
+//add_action('wp_head', 'wiki_css');
+//add_filter('the_content', 'wikify', 2);
+//add_filter('the_excerpt', 'wikify', 2);
