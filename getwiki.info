@@ -1,0 +1,4 @@
+; $Id$
+name = GetWiki
+description = "Embed a Wikipedia article anywhere in your blog."
+
